@@ -1,9 +1,10 @@
 #include "stdafx.h"
 #include "ToneMapping.h"
 
-void ToneMapping::Bilaterial(Mat& input, Mat& output) {
+void ToneMapping::Bilateral(Mat& input, Mat& output) {
 	int row = input.rows, col = input.cols;
-	double sigmaColor = 0.4, sigmaSpace = 0.01 * min(row, col);
+	double sigmaColor = 0.4, sigmaSpace = 0.02 * min(row, col);
+	// double sigmaColor = 0.5, sigmaSpace = 0.02 * min(row, col);
 
 	Mat intensity(row, col, CV_32FC1);
 	Mat logintensity = intensity.clone();
@@ -18,7 +19,7 @@ void ToneMapping::Bilaterial(Mat& input, Mat& output) {
 	float minv = 1000010, maxv = -1000010;
 
 	bilateralFilter(logintensity, lowF, -1, sigmaColor, sigmaSpace);
-	imshow("lowf", lowF);
+	// imwrite("lowf.jpg", lowF);
 
 	highF = intensity.clone();
 	for (int i = 0; i < row; i++) {
@@ -29,13 +30,15 @@ void ToneMapping::Bilaterial(Mat& input, Mat& output) {
 		}
 	}
 
-	float compress = (log(5) / log(10)) / (maxv - minv);
-	float scale = 1.0 / pow(10, compress*maxv);
+	float compress = (log(8)) / (maxv - minv);
+	//float compress = (log(5) / log(10)) / (maxv - minv);
+	float scale = compress*maxv;
+	//float scale = 1.0 / pow(10, compress*maxv);
 
 	Mat final = lowF.clone();
 	for (int i = 0; i < row; i++) {
 		for (int j = 0; j < col; j++) {
-			final.at<float>(i, j) = pow(10, lowF.at<float>(i, j)*compress + highF.at<float>(i, j));
+			final.at<float>(i, j) = (float)pow(10.0, lowF.at<float>(i, j)*compress + highF.at<float>(i, j) - scale);
 		}
 	}
 
@@ -44,7 +47,8 @@ void ToneMapping::Bilaterial(Mat& input, Mat& output) {
 	for (int i = 0; i < row; i++) {
 		for (int j = 0; j < col; j++) {
 			for (int c = 0; c < 3; c++) {
-				res.at<Vec3b>(i, j)[c] = saturate_cast<uchar>(scale * input.at<Vec3f>(i, j)[c] * (final.at<float>(i, j) / intensity.at<float>(i, j)*255.0));
+				res.at<Vec3b>(i, j)[c] = saturate_cast<uchar>(input.at<Vec3f>(i, j)[c] / intensity.at<float>(i, j) * final.at<float>(i, j) * 255.0);
+				//res.at<Vec3b>(i, j)[c] = saturate_cast<uchar>(pow((double)res.at<Vec3b>(i, j)[c] / 255.0, 2.2)*255.0);
 			}
 		}
 	}
@@ -57,7 +61,10 @@ void ToneMapping::Bilaterial(Mat& input, Mat& output) {
 //TODO: local operators
 void ToneMapping::Reinhard(Mat &input, Mat &output)
 {
-	double a = 0.2, Lwhite = 15;
+	//output = localOperator(input, 1, 1);
+	//return;
+
+	double a = 0.15, Lwhite = 100;
 	int row = input.rows, col = input.cols;
 
 	Mat intensity(row, col, CV_32FC1);
@@ -97,8 +104,6 @@ void ToneMapping::Reinhard(Mat &input, Mat &output)
 	return;
 }
 
-
-/*
 void ToneMapping::Gradient(Mat &input, Mat &output) {
 	int row = input.rows, col = input.cols;
 
@@ -173,6 +178,92 @@ void ToneMapping::Gradient(Mat &input, Mat &output) {
 	return;
 }
 
+Mat ToneMapping::localOperator(Mat& image, double sat, double a) {
+	int row = image.rows;
+	int col = image.cols;
+	int n = row * col;
+
+	double sum = 0;
+	Mat intensity(row, col, CV_32FC1);
+	Mat logintensity(row, col, CV_32FC1);
+	for (int i = 0; i < row; i++) {
+		for (int j = 0; j < col; j++) {
+			intensity.at<float>(i, j) = 0.0722 * image.at<Vec3f>(i, j)[0] + 0.7152 * image.at<Vec3f>(i, j)[1] + 0.2126 * image.at<Vec3f>(i, j)[2];
+			logintensity.at<float>(i, j) = log(intensity.at<float>(i, j)) / log(2.718285);
+			sum += logintensity.at<float>(i, j);
+		}
+	}
+	sum /= (row*col);
+
+	for (int i = 0; i < row; i++) {
+		for (int j = 0; j < col; j++) {
+			intensity.at<float>(i, j) /= exp(sum);
+		}
+	}
+
+	double thres = 0.0001;
+
+	double level = 8, phi = 1;
+	vector<Mat> Vs;
+	vector<Mat> Ls_blur;
+	Mat now = intensity.clone();
+	for (int i = 0; i < level; i++) {
+		GaussianBlur(now, now, Size(43, 43), 1*i, 1*i);
+		//imwrite("now" + to_string(i) + ".jpg", now);
+		Ls_blur.push_back(now.clone());
+	}
+
+	Mat final = intensity.clone();
+	
+	for (int i = 0; i < row; i++) {
+		for (int j = 0; j < col; j++) {
+			for (int i = level - 2; i >= 0; i--) {
+				double now = (Ls_blur[i].at<float>(i, j) - Ls_blur[i + 1].at<float>(i, j)) / (0.00001 + Ls_blur[i].at<float>(i, j));
+				//double now = (Ls_blur[i].at<float>(i, j) - Ls_blur[i + 1].at<float>(i, j)) / (pow(2, phi)*a / (i*i) + Ls_blur[i].at<float>(i, j));
+				//cout << now << endl;
+				if (abs(now) < thres) {
+					final.at<float>(i, j) = intensity.at<float>(i, j) / (1 + Ls_blur[i].at<float>(i, j));
+					break;
+				}
+			}
+		}
+	}
+
+	Mat res(row, col, CV_8UC3);
+	for (int i = 0; i < row; i++) {
+		for (int j = 0; j < col; j++) {
+			for (int c = 0; c < 3; c++) {
+				res.at<Vec3b>(i, j)[c] = saturate_cast<uchar>(5*image.at<Vec3f>(i, j)[c] * (final.at<float>(i, j)*255 / intensity.at<float>(i, j)));
+			}
+		}
+	}
+
+	return res;
+
+}
+
+Mat convolution(Mat& image, Mat& mask) {
+	Mat input = image.clone();
+	int row = input.rows;
+	int col = input.cols;
+
+	for (int i = 0; i < row; i++) {
+		for (int j = 0; j < col; j++) {
+			double sum = 0;
+			for (int ii = 0; ii < mask.rows; ii++) {
+				for (int jj = 0; jj < mask.cols; jj++) {
+					int r = i + ii, c = j + jj;
+					if (r >= 0 && r < row && c >= 0 && c < col) {
+						sum += input.at<float>(r, c)*mask.at<float>(ii, jj);
+					}
+				}
+			}
+			input.at<float>(i, j) = sum;
+		}
+	}
+	return input;
+}
+
 
 void ToneMapping::Attenuate(Mat& input, Mat& output) {
 	int row = input.rows, col = input.cols;
@@ -186,5 +277,3 @@ void ToneMapping::Attenuate(Mat& input, Mat& output) {
 
 	output = res.clone();
 }
-
-*/

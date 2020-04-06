@@ -50,7 +50,7 @@
     <ClCompile Include="ToneMapping.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
-    <ClCompile Include="Main.cpp">
+    <ClCompile Include="OpenCVTest.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
   </ItemGroup>
